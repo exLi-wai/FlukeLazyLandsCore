@@ -1,7 +1,10 @@
 package com.lw.flu.explosion;
 
+import java.util.ArrayList;
+
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.level.ExplosionEvent;
 
@@ -16,6 +19,7 @@ public final class ExplosionRecipeEvents {
         }
 
         var random = level.random;
+        var conversions = new ArrayList<PendingConversion>();
 
         for (var entity : event.getAffectedEntities()) {
             if (!(entity instanceof ItemEntity itemEntity) || !itemEntity.isAlive()) {
@@ -28,21 +32,34 @@ public final class ExplosionRecipeEvents {
             }
 
             var inputStack = itemEntity.getItem();
-            var conversions = inputStack.getCount() / recipe.inputCount();
-            if (conversions <= 0) {
+            var conversionCount = inputStack.getCount() / recipe.inputCount();
+            if (conversionCount <= 0) {
                 continue;
             }
 
             var remainder = inputStack.getCount() % recipe.inputCount();
-            itemEntity.discard();
-            var position = itemEntity.position();
+            conversions.add(new PendingConversion(itemEntity, itemEntity.position(), recipe, conversionCount, remainder));
+        }
 
-            if (remainder > 0) {
-                var remainderStack = inputStack.copyWithCount(remainder);
+        if (conversions.isEmpty()) {
+            return;
+        }
+
+        event.getAffectedEntities().removeIf(entity -> conversions.stream().anyMatch(conversion -> conversion.itemEntity() == entity));
+
+        for (var conversion : conversions) {
+            var itemEntity = conversion.itemEntity();
+            var position = conversion.position();
+            var recipe = conversion.recipe();
+
+            itemEntity.discard();
+
+            if (conversion.remainder() > 0) {
+                var remainderStack = itemEntity.getItem().copyWithCount(conversion.remainder());
                 level.addFreshEntity(new ItemEntity(level, position.x, position.y, position.z, remainderStack));
             }
 
-            for (int i = 0; i < conversions; i++) {
+            for (int i = 0; i < conversion.conversions(); i++) {
                 for (var drop : recipe.drops()) {
                     if (random.nextDouble() > drop.chance()) {
                         continue;
@@ -56,5 +73,8 @@ public final class ExplosionRecipeEvents {
                 }
             }
         }
+    }
+
+    private record PendingConversion(ItemEntity itemEntity, Vec3 position, ExplosionRecipe recipe, int conversions, int remainder) {
     }
 }
